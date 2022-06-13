@@ -1,0 +1,49 @@
+---
+title: "Why should I use SVDE?"
+author: "Salvatore Milite"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+
+## A SVI powered DE tool
+
+As the number of cells profiled in scRNA-seq experiments continues to grow, the need for fast and reliable tools for task such as normalization, differential expression and clustering continues. Methods for DE testing in scRNA-seq range from simple non-parametric tests to Variational-Autoencoder-based Bayesian models. Still (see for a review and benchmark), generalized linear models are arguably the most popular class of statistical models when there is the need to account for a complex model design, due to their speed and interpretability. 
+
+However, the performances of those methods does not scale extremely well with sample size. At the same time the implementation of GLM in the RNA and scRNA-seq tools does not use the full power of modern computing and HPC hardware.
+Here we present an implementation of Bayesian Negative Binomial regression tailored for scRNA-seq that uses PyTorch and Pyro, and is able to exploit the power of tensor calculus and GPUs. 
+
+We use two algorithms for learning the latent coefficients: 
+
+* Stochastic Variational Inference  
+* Hamiltonian Monte-Carlo Sampling 
+
+## Bayesian Regression
+
+TODO
+
+We like Bayesian regression because you can range from Ridge regression to Lasso/Elastic Net or whatever you want without changing the algorithm. 
+Moreover, no asymptotic SE.
+
+## Why IRLS can become slow?
+
+TODO
+
+In a nutshell computing Hessian=BAD!!! (Fisher information matrix/W matrix of IRLS)
+
+Create some nice benchmark 
+
+## Pitafails and assumptions
+
+TODO
