@@ -14,8 +14,8 @@
 #' @export
 #'
 #' @examples
+
 perform_test <- function(fit_object,input_matrix,model_matrix,  group1, group2, pval = 0.05, LFC = 0.5, pct = 0.3, filter = TRUE) {
-  
   
   idx_1 <- grepl(group1, colnames(model_matrix))
   idx_2 <- grepl(group2, colnames(model_matrix))

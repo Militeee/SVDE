@@ -15,6 +15,9 @@ library(reticulate)
 library(dplyr)
 library(SVDE)
 
+
+reticulate::use_condaenv("scvi", required = T)
+
 # Get the dataset online
 # InstallData("pbmc3k")
 
@@ -37,7 +40,7 @@ model_matrix <- model.matrix(~ 1, pbmc3k@meta.data) # we just need an intercept
 head(model_matrix)
 
 
-model_intercept <- fit_linear_model(input_matrix,model_matrix,ncounts)
+model_intercept <- fit_linear_model(input_matrix,model_matrix,ncounts, method_specific_args = list(batch_size = 1000L))
 
 ```
 
@@ -72,8 +75,7 @@ DimPlot(pbmc3k_norm, reduction = "umap",group.by = "seurat_annotations")
 ```
 
 ## Simple test
-CD
-You can also embed plots, for example:
+
 
 ```{r}
 pbmc3k@meta.data$seurat_annotations <- as.character(pbmc3k@meta.data$seurat_annotations) 
@@ -86,8 +88,8 @@ model_matrix <- model.matrix(~ seurat_annotations - 1, pbmc3k@meta.data) # we ju
 
 default_args <- list(steps = 350L, lr = 0.1,
    gamma_lr = 0.1,
-  cuda = TRUE, jit_compile = FALSE,
-  full_cov = TRUE, batch_size = 10240L  , 
+  cuda = FALSE, jit_compile = FALSE,
+  full_cov = TRUE, batch_size = 10240L, 
   prior_loc = 0.1, 
   theta_bounds = c(1e-6, 1e6),
   init_loc = 0.1, init_theta = 1000)
@@ -95,6 +97,7 @@ default_args <- list(steps = 350L, lr = 0.1,
 
 default_args$lr <- 0.01
 default_args$gamma_lr <- 0.5
+default_args$batch_size <- 1000L
 
 model_simple <- fit_linear_model(input_matrix,model_matrix,ncounts, method_specific_args =default_args)
 
@@ -113,5 +116,15 @@ DotPlot(pbmc3k %>% subset(seurat_annotations %in% c("B", "CD8 T")), features = t
 
 ## Run with HMC 
 
+```{r}
+model_matrix <- model.matrix(~ 1, pbmc3k@meta.data) # we just need an intercept 
+
+model_intercep_HMC <- fit_linear_model(input_matrix[1:30, 1:200],model_matrix[1:200,,drop = F],ncounts[1:30],  inference_method = "HMC")
+
+
+```
+
+
+## Run with MLE 
 
 

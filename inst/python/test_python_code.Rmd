@@ -1,3 +1,18 @@
+---
+title: "Test python"
+author: "Salvatore Milite"
+date: "03/03/2023"
+output: html_document
+---
+
+```{r}
+reticulate::use_condaenv("scvi", required = TRUE)
+```
+
+# Data loading
+
+
+```{python}
 import pandas as pd
 import numpy as np
 import torch
@@ -15,6 +30,31 @@ import sys
 from tqdm import trange
 
 
+```
+
+
+```{python}
+
+import pickle 
+
+with open('../data_python/input_matrix_test.pkl', 'rb') as f:
+    input_matrix = pickle.load(f)[:,0:2638]
+
+with open('../data_python/model_matrix_test.pkl', 'rb') as f:
+    model_matrix = pickle.load(f)
+    
+with open('../data_python/UMI_test.pkl', 'rb') as f:
+    UMI = pickle.load(f)[0:2638]
+
+random_effects = torch.zeros((2638,2))
+random_effects[0:1319,0] =1
+random_effects[1319:2638,1] = 1
+
+```
+
+# Model and Guide
+
+```{python}
 
 def model(input_matrix, model_matrix, UMI, group_matrix = None, full_cov = False,SVI = False,
 amortize = False,
@@ -59,9 +99,10 @@ init_loc = 0.1, init_theta = 1):
         pyro.sample("obs", dist.NegativeBinomial(logits = eta - torch.log(theta) ,
         total_count= torch.clamp(theta, 1e-9,1e9)), obs = input_matrix.t())
 
-      
-      
-      
+```
+
+
+```{python}
 def guide(input_matrix, model_matrix, UMI,  group_matrix = None, full_cov = False,SVI = False,
 prior_loc = 10, batch_size = 5120, 
 theta_bounds = (0.1, 10000),
@@ -101,132 +142,140 @@ init_loc = 0.1, init_theta = 1):
         pyro.sample("beta", dist.MultivariateNormal(beta_mean,scale_tril = beta_loc, validate_args=False))
       else:
         pyro.sample("beta", dist.Normal(beta_mean, beta_loc).to_event(1))
-        
-        
-def guide_mle(*args, **kargs):
-  pass
-        
-        
 
-def run_SVDE(input_matrix,model_matrix, ncounts, 
-            group_matrix = None,
-            steps = 100, lr = 0.1,gamma_lr = 0.1,
-            cuda = False, jit_compile = False,
-            full_cov = False, batch_size = 5120, 
-            prior_loc = 0.1,
-            theta_bounds = (1, 1000),
-            init_loc = 0.1, init_theta = 128
-):
+
+```
+
+# SVI 
+
+```{python}
+
+steps = 50
+lr = 0.1
+gamma_lr = 0.1
+cuda = True
+jit_compile = False
+full_cov = True
+batch_size = 1000
+prior_loc = 0.1
+theta_bounds = (1, 1000)
+init_loc = 0.1
+init_theta = 128
+```
+
+
+```{python}
+if cuda and torch.cuda.is_available():
+  torch.set_default_tensor_type('torch.cuda.FloatTensor')
+else:
+  torch.set_default_tensor_type(t=torch.FloatTensor)
+
+if jit_compile and not cuda:
+  loss = JitTrace_ELBO
+else:
+  loss = Trace_ELBO
   
-  if cuda and torch.cuda.is_available():
+#input_matrix, model_matrix, UMI = torch.tensor(input_matrix).float(), torch.tensor(model_matrix).float(), torch.tensor(UMI).float()
+
+
+lrd = gamma_lr ** (1 / steps)
+  
+
+svi = SVI(model, guide, pyro.optim.ClippedAdam({"lr": lr, "lrd" : lrd}),loss=loss())
+          
+elbo_list = [] 
+
+pyro.clear_param_store()
+
+norm_ind = input_matrix.shape[0] * input_matrix.shape[1]
+
+t = trange(steps, desc='Bar desc', leave = True)
+
+for i in t:
+  elbo = svi.step(input_matrix, model_matrix, UMI,group_matrix = random_effects,  full_cov = full_cov, SVI = True, batch_size = batch_size,
+  prior_loc = prior_loc,
+          theta_bounds = theta_bounds,
+          init_loc = init_loc, init_theta = init_theta)
+          
+  elbo_list.append(elbo / batch_size)
+  t.set_description('ELBO: {:.5f}  '.format(elbo / norm_ind))
+  _ = t.refresh()
+
+
+```
+
+```{python}
+n_features = model_matrix.shape[1]
+coeff = pyro.param("beta_mean")
+overdispersion = pyro.param("theta_p")
+
+if full_cov and n_features > 1:
+  loc = torch.bmm(pyro.param("beta_loc"),pyro.param("beta_loc").permute(0,2,1))
+else:
+  loc = pyro.param("beta_loc")
+  
+eta = torch.exp(torch.matmul(model_matrix, coeff.t()) + torch.unsqueeze(torch.log(UMI), 1) )
+lk = dist.NegativeBinomial(logits = eta - torch.log(overdispersion) ,
+      total_count= torch.clamp(overdispersion, 1e-9,1e9)).log_prob(input_matrix.t()).sum(dim = 0)
+
+if cuda: 
+  input_matrix = input_matrix.cpu().detach().numpy() 
+  overdispersion = overdispersion.cpu().detach().numpy() 
+  eta = eta.cpu().detach().numpy()
+  coeff = coeff.cpu().detach().numpy()
+  loc = loc.cpu().detach().numpy()
+  lk = lk.cpu().detach().numpy()
+else:
+  input_matrix = input_matrix.detach().numpy() 
+  overdispersion = overdispersion.detach().numpy() 
+  eta = eta.detach().numpy()
+  coeff = coeff.detach().numpy()
+  loc = loc.detach().numpy()
+  lk = lk.detach().numpy()
+
+variance =  eta + eta**2 / overdispersion
+```
+
+
+# HMC 
+
+```{python}
+
+num_samples = 100 
+warmup_steps = 100
+lr = 0.1
+gamma_lr = 0.1
+cuda = False
+jit_compile = False
+full_cov = True
+batch_size = 1000
+prior_loc = 0.1
+theta_bounds = (1, 1000)
+init_loc = 0.1
+init_theta = 128
+```
+
+```{python}
+if cuda and torch.cuda.is_available():
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
-  else:
-    torch.set_default_tensor_type(t=torch.FloatTensor)
-  
-  if jit_compile and not cuda:
-    loss = JitTrace_ELBO
-  else:
-    loss = Trace_ELBO
-    
-  input_matrix, model_matrix, UMI = torch.tensor(input_matrix).float(), torch.tensor(model_matrix).float(), torch.tensor(ncounts).float()
-  
+else:
+  torch.set_default_tensor_type(t=torch.FloatTensor)
 
-  lrd = gamma_lr ** (1 / steps)
-    
+if jit_compile and not cuda:
+  loss = JitTrace_ELBO
+else:
+  loss = Trace_ELBO
   
-  svi = SVI(model,
-            guide,
-            pyro.optim.ClippedAdam({"lr": lr, "lrd" : lrd}),
-            loss=loss())
-            
-  elbo_list = [] 
-  
-  pyro.clear_param_store()
-  
-  norm_ind = input_matrix.shape[0] * input_matrix.shape[1]
-  
-  t = trange(steps, desc='Bar desc', leave = True)
-  
-  for i in t:
-    elbo = svi.step(input_matrix, model_matrix, UMI,group_matrix = group_matrix, full_cov = full_cov, SVI = True, batch_size = batch_size,
-    prior_loc = prior_loc,
-            theta_bounds = theta_bounds,
-            init_loc = init_loc, init_theta = init_theta)
-            
-    elbo_list.append(elbo / batch_size)
-    t.set_description('ELBO: {:.5f}  '.format(elbo / norm_ind))
-    t.refresh()
-    
-    
-  n_features = model_matrix.shape[1]
-  coeff = pyro.param("beta_mean")
-  overdispersion = pyro.param("theta_p")
-  
-  if full_cov and n_features > 1:
-    loc = torch.bmm(pyro.param("beta_loc"),pyro.param("beta_loc").permute(0,2,1))
-  else:
-    loc = pyro.param("beta_loc")
-    
-  eta = torch.exp(torch.matmul(model_matrix, coeff.t()) + torch.unsqueeze(torch.log(UMI), 1) )
-  lk = dist.NegativeBinomial(logits = eta - torch.log(overdispersion) ,
-        total_count= torch.clamp(overdispersion, 1e-9,1e9)).log_prob(input_matrix.t()).sum(dim = 0)
-  
-  if cuda: 
-    input_matrix = input_matrix.cpu().detach().numpy() 
-    overdispersion = overdispersion.cpu().detach().numpy() 
-    eta = eta.cpu().detach().numpy()
-    coeff = coeff.cpu().detach().numpy()
-    loc = loc.cpu().detach().numpy()
-    lk = lk.cpu().detach().numpy()
-  else:
-    input_matrix = input_matrix.detach().numpy() 
-    overdispersion = overdispersion.detach().numpy() 
-    eta = eta.detach().numpy()
-    coeff = coeff.detach().numpy()
-    loc = loc.detach().numpy()
-    lk = lk.detach().numpy()
-  
-  variance =  eta + eta**2 / overdispersion
-  
-  return {"loss" : elbo_list, "params" : {
-  "theta" : overdispersion,
-  "lk" : lk,
-  "beta" : coeff,
-  "eta" : eta,
-  "variance" : loc
-  }, "residuals" : input_matrix.transpose(1,0) - eta / np.sqrt(variance) }
-  
-  
-def run_HMC(input_matrix,model_matrix,ncounts,
-            group_matrix = None,
-            num_samples = 1000, nchains = 4, warmup_steps = 200,
-            cuda = False, jit_compile = True,
-            full_cov = False,
-            prior_loc = 0.1,
-            theta_bounds = (1, 1000)):
-              
-              
-  if cuda and torch.cuda.is_available():
-    torch.set_default_tensor_type('torch.cuda.FloatTensor')
-  else:
-    torch.set_default_tensor_type(t=torch.FloatTensor)
-  
-  if jit_compile and not cuda:
-    loss = JitTrace_ELBO
-  else:
-    loss = Trace_ELBO
-    
-  input_matrix, model_matrix, UMI = torch.tensor(input_matrix).float(), torch.tensor(model_matrix).float(), torch.tensor(ncounts).float()
-  
-  nuts_kernel = NUTS(model)
+input_matrix, model_matrix, UMI = input_matrix[1:20,:], model_matrix, UMI
 
-  mcmc = MCMC(nuts_kernel, num_samples=num_samples, warmup_steps=warmup_steps)
-  mcmc.run(input_matrix, model_matrix, UMI, group_matrix = group_matrix, full_cov = full_cov, SVI = False)
-  if cuda: 
-    hmc_samples = {k: v.detach().cpu().numpy() for k, v in mcmc.get_samples().items()}
-  else:
-    hmc_samples = {k: v.detach().numpy() for k, v in mcmc.get_samples().items()}
+nuts_kernel = NUTS(model)
 
-  
-  return  {"params" :  hmc_samples }
+mcmc = MCMC(nuts_kernel, num_samples=num_samples, warmup_steps=warmup_steps)
+mcmc.run(input_matrix, model_matrix, UMI, full_cov = full_cov, SVI = False)
+if cuda: 
+  hmc_samples = {k: v.detach().cpu().numpy() for k, v in mcmc.get_samples().items()}
+else:
+  hmc_samples = {k: v.detach().numpy() for k, v in mcmc.get_samples().items()}
+```
+
 
